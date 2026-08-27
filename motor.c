@@ -1,11 +1,14 @@
 #include "motor.h"
 
 
-// Defini��o dos pinos do L293D
+// Definição dos pinos do L293D
 
 #define MOTOR_IN1 LATDbits.LATD0
 #define MOTOR_IN2 LATDbits.LATD1
 #define MOTOR_ENABLE LATDbits.LATD2
+
+// Ajustar de acordo com o tempo mecânico necessário para fechar a porta.
+#define MOTOR_CLOSE_TIME_MS 2000
 
 
 
@@ -13,7 +16,7 @@ void motor_init(void)
 {
 
 
-    // RD0, RD1 e RD2 como sa�da
+    // RD0, RD1 e RD2 como saída
 
     TRISDbits.TRISD0 = 0;
     TRISDbits.TRISD1 = 0;
@@ -46,7 +49,7 @@ void motor_start(void)
 
 
     /*
-       Define sentido de rota��o
+       Define sentido de rotação
 
        IN1 = 1
        IN2 = 0
@@ -79,4 +82,19 @@ void motor_stop(void)
     MOTOR_IN2 = 0;
 
 
+}
+
+void motor_close_for_time(void)
+{
+    uint8_t i;
+
+    motor_start();
+
+    // __delay_ms aceita constantes; 20 x 100 ms mantém o código portátil no XC8.
+    for(i = 0; i < (MOTOR_CLOSE_TIME_MS / 100); i++)
+    {
+        __delay_ms(100);
+    }
+
+    motor_stop();
 }
