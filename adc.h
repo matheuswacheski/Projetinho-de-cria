@@ -4,7 +4,7 @@
 #include <xc.h>
 #include <stdint.h>
 
-#define _XTAL_FREQ 20000000
+#define _XTAL_FREQ 4000000
 
 
 // Inicializa o conversor AD
