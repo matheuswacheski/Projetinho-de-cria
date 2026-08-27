@@ -4,7 +4,7 @@ Projeto: Sistema de Alarme com Laser
 PIC18F4550
 MPLAB X + XC8
 Arquivo: main.c
-Clock: 20MHz
+Clock: 4MHz
 ========================================================
 */
 
@@ -18,12 +18,12 @@ Clock: 20MHz
 #include "motor.h"
 #include "alarme.h"
 
-#define _XTAL_FREQ 20000000
+#define _XTAL_FREQ 4000000
 
 
 //================ CONFIG BITS =================
 
-#pragma config PLLDIV = 5
+#pragma config PLLDIV = 1
 #pragma config CPUDIV = OSC1_PLL2
 #pragma config USBDIV = 2
 
@@ -43,7 +43,10 @@ Clock: 20MHz
 
 //================================================
 
-#define LDR_THRESHOLD 300
+#define LDR_THRESHOLD_DISPARO 300
+#define LDR_THRESHOLD_REARME  340
+#define LDR_AMOSTRAS_DISPARO  8
+#define TEMPO_ESTABILIZACAO_MS 2000
 
 
 // Estados do sistema
@@ -51,24 +54,31 @@ Clock: 20MHz
 typedef enum
 {
     DESLIGADO = 0,
+    ARMANDO,
     ARMADO,
-    ALARME
+    ALARME,
+    FALHA_SENSOR
 
 }EstadoSistema;
 
 
 EstadoSistema estado = DESLIGADO;
+static uint8_t leiturasBaixas = 0;
 
 
 // Senha
 
-char senhaCorreta[] = "12345";
+const char senhaCorreta[] = "12345";
 char senhaDigitada[6];
 
 
-// ProtÛtipo
+// Prot√≥tipo
 
 void configurarPIC(void);
+bool feixe_interrompido(void);
+void feixe_resetar(void);
+bool ldr_recebe_laser(void);
+void aguardar_estabilizacao(void);
 
 
 //================================================
@@ -81,7 +91,7 @@ void main(void)
     configurarPIC();
 
 
-    // InicializaÁ„o dos mÛdulos
+    // Inicializa√ß√£o dos m√≥dulos
 
     keypad_init();
 
@@ -114,17 +124,43 @@ void main(void)
                     if(strcmp(senhaDigitada, senhaCorreta) == 0)
                     {
 
-                        // Liga LED e laser
+                        // Liga o laser e aguarda o sensor estabilizar.
 
                         alarm_arm();
 
+                        feixe_resetar();
 
-                        estado = ARMADO;
+
+                        estado = ARMANDO;
 
                     }
 
                 }
 
+
+            break;
+
+
+            //====================================
+            // ESTABILIZACAO DO FEIXE
+            //====================================
+
+            case ARMANDO:
+
+                aguardar_estabilizacao();
+
+                // N√£o arma se o LDR n√£o estiver recebendo o laser.
+                if(ldr_recebe_laser())
+                {
+                    estado = ARMADO;
+                }
+                else
+                {
+                    // Falha de alinhamento, laser ou sensor: n√£o move a porta.
+                    alarm_trigger();
+                    motor_stop();
+                    estado = FALHA_SENSOR;
+                }
 
             break;
 
@@ -137,12 +173,24 @@ void main(void)
             case ARMADO:
 
 
+                // A senha tamb√©m permite desarmar preventivamente.
+                if(keypad_getPassword(senhaDigitada))
+                {
+                    if(strcmp(senhaDigitada, senhaCorreta) == 0)
+                    {
+                        alarm_disarm();
+                        estado = DESLIGADO;
+                        break;
+                    }
+                }
+
+
                 /*
                  Quando o laser deixa de chegar no LDR,
                  o alarme dispara.
                 */
 
-                if(adc_readLDR() < LDR_THRESHOLD)
+                if(feixe_interrompido())
                 {
 
 
@@ -152,9 +200,9 @@ void main(void)
 
 
 
-                    // Liga motor pelo L293D
+                    // Fecha a porta pelo tempo m√°ximo configurado no motor.c.
 
-                    motor_start();
+                    motor_close_for_time();
 
 
 
@@ -162,6 +210,26 @@ void main(void)
 
                 }
 
+
+            break;
+
+
+            //====================================
+            // FALHA DE SENSOR / FEIXE DESALINHADO
+            //====================================
+
+            case FALHA_SENSOR:
+
+                // A senha reconhecida silencia a falha e retorna ao estado seguro.
+                if(keypad_getPassword(senhaDigitada))
+                {
+                    if(strcmp(senhaDigitada, senhaCorreta) == 0)
+                    {
+                        alarm_disarm();
+                        motor_stop();
+                        estado = DESLIGADO;
+                    }
+                }
 
             break;
 
@@ -193,7 +261,7 @@ void main(void)
 
 
 
-                        // Volta ao inÌcio
+                        // Volta ao in√≠cio
 
                         estado = DESLIGADO;
 
@@ -217,7 +285,7 @@ void main(void)
 
 
 //================================================
-// CONFIGURA«√O DO PIC
+// CONFIGURA√á√ÉO DO PIC
 //================================================
 
 void configurarPIC(void)
@@ -231,7 +299,7 @@ void configurarPIC(void)
 
 
     /*
-      ConfiguraÁ„o analÛgica:
+      Configura√ß√£o anal√≥gica:
       RA0 = AN0 (LDR)
       demais pinos digitais
     */
@@ -295,4 +363,56 @@ void configurarPIC(void)
     LATE = 0x00;
 
 
+}
+
+/*
+ * Exige leituras baixas consecutivas antes de disparar. Isso reduz falsos
+ * alarmes por ru√≠do el√©trico, cintila√ß√£o ou sombra passageira no LDR.
+ */
+bool feixe_interrompido(void)
+{
+    uint16_t leitura = adc_readLDR();
+
+    if(leitura < LDR_THRESHOLD_DISPARO)
+    {
+        if(leiturasBaixas < LDR_AMOSTRAS_DISPARO)
+        {
+            leiturasBaixas++;
+        }
+    }
+    else if(leitura > LDR_THRESHOLD_REARME)
+    {
+        leiturasBaixas = 0;
+    }
+
+    return (leiturasBaixas >= LDR_AMOSTRAS_DISPARO);
+}
+
+void feixe_resetar(void)
+{
+    leiturasBaixas = 0;
+}
+
+bool ldr_recebe_laser(void)
+{
+    uint8_t i;
+    uint32_t soma = 0;
+
+    for(i = 0; i < 8; i++)
+    {
+        soma += adc_readLDR();
+        __delay_ms(5);
+    }
+
+    return ((soma / 8) > LDR_THRESHOLD_REARME);
+}
+
+void aguardar_estabilizacao(void)
+{
+    uint8_t i;
+
+    for(i = 0; i < (TEMPO_ESTABILIZACAO_MS / 100); i++)
+    {
+        __delay_ms(100);
+    }
 }
