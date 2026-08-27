@@ -1,7 +1,7 @@
 #include "keypad.h"
 
 
-// Colunas (sa�das)
+// Colunas (saídas)
 
 #define COL1 LATBbits.LATB0
 #define COL2 LATBbits.LATB1
@@ -30,7 +30,7 @@ const char teclado[4][3] =
 void keypad_init(void)
 {
 
-    // Colunas como sa�da
+    // Colunas como saída
 
     TRISBbits.TRISB0 = 0;
     TRISBbits.TRISB1 = 0;
@@ -50,7 +50,7 @@ void keypad_init(void)
     INTCON2bits.RBPU = 0;
 
 
-    // Colunas em n�vel alto
+    // Colunas em nível alto
 
     COL1 = 1;
     COL2 = 1;
@@ -60,7 +60,7 @@ void keypad_init(void)
 
 
 
-char keypad_getKey(void)
+static char keypad_scan(void)
 {
 
     unsigned char coluna;
@@ -101,28 +101,24 @@ char keypad_getKey(void)
 
         if(LIN1 == 0)
         {
-            while(LIN1 == 0);
             return teclado[0][coluna];
         }
 
 
         if(LIN2 == 0)
         {
-            while(LIN2 == 0);
             return teclado[1][coluna];
         }
 
 
         if(LIN3 == 0)
         {
-            while(LIN3 == 0);
             return teclado[2][coluna];
         }
 
 
         if(LIN4 == 0)
         {
-            while(LIN4 == 0);
             return teclado[3][coluna];
         }
 
@@ -132,6 +128,35 @@ char keypad_getKey(void)
 
     return 0;
 
+}
+
+char keypad_getKey(void)
+{
+    static char teclaAnterior = 0;
+    char tecla = keypad_scan();
+
+    // Uma tecla só é entregue uma vez, até que seja solta.
+    if(tecla == 0)
+    {
+        teclaAnterior = 0;
+        return 0;
+    }
+
+    if(tecla == teclaAnterior)
+    {
+        return 0;
+    }
+
+    // Debounce curto; não há mais espera indefinida pela soltura da tecla.
+    __delay_ms(20);
+
+    if(keypad_scan() != tecla)
+    {
+        return 0;
+    }
+
+    teclaAnterior = tecla;
+    return tecla;
 }
 
 
@@ -154,7 +179,7 @@ bool keypad_getPassword(char *senha)
     {
 
 
-        // Aceita apenas n�meros
+        // Aceita apenas números
 
         if(tecla >= '0' && tecla <= '9')
         {
@@ -185,6 +210,7 @@ bool keypad_getPassword(char *senha)
         {
 
             posicao = 0;
+            senha[0] = '\0';
 
         }
 
